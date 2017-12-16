@@ -14,6 +14,11 @@ async function clear_rules() {
   )) {
     await rp.delete(`${url}/rules/${id}`);
   }
+  for (const [id, _] of Object.entries(raw_data.scenes).filter(
+    ([_, { owner }]) => owner === API_KEY
+  )) {
+    await rp.delete(`${url}/scenes/${id}`);
+  }
 }
 
 async function apply(switches, rooms, lights) {
@@ -40,6 +45,28 @@ async function apply(switches, rooms, lights) {
     }
   ];
 
+  // Create scenes
+  for (const scene of scene_mappings) {
+    const [{ success: { id } }] = await rp.post({
+      url: `${url}/scenes`,
+      json: true,
+      body: {
+        name: `${scene.name} - global`,
+        lights: Object.keys(lights),
+        recycle: false
+      }
+    });
+
+    scene.id = id;
+    for (const light_id of Object.keys(lights)) {
+      await rp.put({
+        url: `${url}/scenes/${id}/lightstates/${light_id}`,
+        json: true,
+        body: scene.action
+      });
+    }
+  }
+
   const new_rules = Object.values(switches)
     .filter(s => s.room && rooms[s.room])
     .reduce((curr_array, curr_switch) => {
@@ -56,7 +83,7 @@ async function apply(switches, rooms, lights) {
           {
             address: `/groups/${curr_switch.room}/action`,
             method: "PUT",
-            body: scene.action
+            body: { scene: scene.id }
           }
         ]
       }));
