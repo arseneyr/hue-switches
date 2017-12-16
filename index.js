@@ -6,11 +6,13 @@ const rp = require("request-promise");
 const Spinner = require("clui").Spinner;
 
 const API_KEY = "vPrv0yLLuI4tfeJh10RGmZ8bzOR53-4g1DuaImow";
-let url;
+let url, raw_data;
 
-async function clear_rules(rules) {
-  for (const rule of Object.keys(rules)) {
-    await rp.delete(`${url}/rules/${rule}`);
+async function clear_rules() {
+  for (const [id, _] of Object.entries(raw_data.rules).filter(
+    ([_, { owner }]) => owner === API_KEY
+  )) {
+    await rp.delete(`${url}/rules/${id}`);
   }
 }
 
@@ -50,11 +52,13 @@ async function apply(switches, rooms, lights) {
             value: scene.button_id
           }
         ],
-        actions: rooms[curr_switch.room].lights.map(l => ({
-          address: `/lights/${l}/state`,
-          method: "PUT",
-          body: scene.action
-        }))
+        actions: [
+          {
+            address: `/groups/${curr_switch.room}/action`,
+            method: "PUT",
+            body: scene.action
+          }
+        ]
       }));
 
       // Main button only turns on if none of the lights in the room are on
@@ -90,14 +94,13 @@ async function apply(switches, rooms, lights) {
             value: "true"
           }
         ],
-        actions: rooms[curr_switch.room].lights.map(l => ({
-          address: `/lights/${l}/state`,
-          method: "PUT",
-          body: {
-            on: false,
-            transitiontime: 3
+        actions: [
+          {
+            address: `/groups/${curr_switch.room}/action`,
+            method: "PUT",
+            body: { on: false, transitiontime: 3 }
           }
-        }))
+        ]
       });
     }, []);
 
@@ -107,7 +110,6 @@ async function apply(switches, rooms, lights) {
 }
 
 async function run() {
-  let raw_data;
   const spinner = new Spinner("Fetching details from hue bridge...");
   clear();
   spinner.start();
@@ -178,11 +180,11 @@ async function run() {
     return obj;
   }, {});
 
-  const main_prompt = () => ({
+  const main_prompt = default_index => ({
     type: "list",
     name: "main",
     message: "Choose a switch to modify (current room)",
-    default: ({ main }) => main,
+    default: default_index,
     pageSize: 20,
     choices: Object.values(switches)
       .map(s => ({
@@ -193,12 +195,12 @@ async function run() {
       .concat([new inquirer.Separator(), "Apply", "Debug Dump", "Exit"])
   });
 
-  let answers;
+  let answers, last_chosen;
 
   while (1) {
     clear();
 
-    answers = await inquirer.prompt(main_prompt());
+    answers = await inquirer.prompt(main_prompt(last_chosen));
     if (answers.main === "Apply" || answers.main === "Exit") {
       break;
     }
@@ -216,6 +218,7 @@ async function run() {
       continue;
     }
 
+    last_chosen = Object.keys(switches).indexOf(answers.main);
     const chosen_switch = switches[answers.main];
 
     answers = await inquirer.prompt({
@@ -239,7 +242,8 @@ async function run() {
     clear();
     spinner.message("Deleting existing rules...");
     spinner.start();
-    await clear_rules(rules);
+    await clear_rules();
+    clear();
     spinner.message("Applying new rules...");
     await apply(switches, rooms, lights);
     spinner.stop();
